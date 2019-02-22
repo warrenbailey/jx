@@ -397,6 +397,10 @@ func (o *StepCreateTaskOptions) generatePipeline(languageName string, pipelineCo
 		// TODO: use org-name-branch for pipeline name? Create client now to get
 		// namespace? Set namespace when applying rather than during generation?
 		name := tekton.PipelineResourceName(o.gitInfo, o.Branch, o.Context)
+
+		//shorten the name - take the last 5 characters
+		name = name[len(name)-5:]
+
 		pipeline, tasks, structure, err := lifecycles.Pipeline.GenerateCRDs(name, o.buildNumber, "will-be-replaced", "abcd", o.PodTemplates)
 		if err != nil {
 			return errors.Wrapf(err, "Generation failed for Pipeline")
