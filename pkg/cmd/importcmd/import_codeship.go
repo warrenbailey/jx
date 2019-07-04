@@ -1,10 +1,11 @@
-package converter
+package importcmd
 
 import (
 	"fmt"
+	"github.com/Pallinder/go-randomdata"
 	"github.com/codeship/codeship-go"
+	"github.com/jenkins-x/jx/pkg/log"
 	"github.com/jenkins-x/jx/pkg/cmd/helper"
-	"github.com/jenkins-x/jx/pkg/cmd/opts"
 	"github.com/jenkins-x/jx/pkg/cmd/templates"
 	"github.com/jenkins-x/jx/pkg/config"
 	"github.com/jenkins-x/jx/pkg/jenkinsfile"
@@ -23,12 +24,13 @@ import (
 type ConvertOptions struct {
 	RepoURL string
 	Dir string
-	*opts.CommonOptions
+	*ImportOptions
 }
 
 // BuildService structure of BuildService object for a Pro Project
 type BuildService struct {
 	Image   string    `json:"image,omitempty"`
+	Build   string    `json:"build,omitempty"`
 }
 
 type BuildStep struct {
@@ -42,25 +44,25 @@ var (
 		`)
 	convertExample = templates.Examples(`
 		# convert the current folder
-		jx convert
+		jx import codeship
 
 		# convert a different folder
-		jx convert /foo/bar
+		jx import codeship /foo/bar
 
 		# convert a Git repository from a URL
-		jx import --url https://github.com/jenkins-x/spring-boot-web-example.git
+		jx import codeship --url https://github.com/jenkins-x/spring-boot-web-example.git
 
 		`)
 	)
 
-// NewCmdConvert the cobra command for jx import
-func NewCmdConvert(commonOpts *opts.CommonOptions) *cobra.Command {
+// NewCmdImportCodeship the cobra command for jx import
+func NewCmdImportCodeship(commonOpts *ImportOptions) *cobra.Command {
 	options := &ConvertOptions{
-		CommonOptions: commonOpts,
+		ImportOptions: commonOpts,
 	}
 	cmd := &cobra.Command{
-		Use:     "convert",
-		Short:   "Convert and import a codeship pro project into Jenkins",
+		Use:     "codeship",
+		Short:   "Convert and import a codeship pro project into Jenkins X",
 		Long:    convertLong,
 		Example: convertExample,
 		Run: func(cmd *cobra.Command, args []string) {
@@ -76,20 +78,27 @@ func NewCmdConvert(commonOpts *opts.CommonOptions) *cobra.Command {
 
 // Run executes the command
 func (options *ConvertOptions) Run() error {
-	println("Converting codeship yaml")
+	log.Logger().Info("Converting codeship yaml")
 
 	err := determineWorkingDir(options)
 
 	buildSteps, err := loadCodeShipBuildSteps(options)
 	if err != nil {
-		return err
+		return errors.Wrapf(err, "failed load codeship build steps")
 	}
+
 	buildServices, err := loadCodeShipBuildServices(options)
 	if err != nil {
-		return err
+		return errors.Wrapf(err, "failed load codeship build services")
 	}
 
 	err = buildJenkinsXSchema(options, buildSteps, buildServices)
+
+	// now run the jx import
+	err = options.ImportOptions.Run()
+	if err != nil {
+		return errors.Wrapf(err, "failed to run jx import")
+	}
 
 	return err
 }
@@ -149,7 +158,6 @@ func loadCodeShipBuildServices(options *ConvertOptions) (map[string]BuildService
 
 
 	data, err := ioutil.ReadFile(fileName)
-	fmt.Println(data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load file %s due to %s", fileName, err)
 	}
@@ -169,9 +177,13 @@ func buildJenkinsXSchema(options *ConvertOptions, buildSteps []BuildStep, buildS
 	steps := createSteps(buildSteps, buildServices)
 
 	projectConfig := &config.ProjectConfig{
-		BuildPack: "None",
+		BuildPack: "none",
 		PipelineConfig: &jenkinsfile.PipelineConfig{
+			Agent: &syntax.Agent {
+				Image: getAgentImage(buildSteps, buildServices),
+			},
 			Pipelines: jenkinsfile.Pipelines{
+
 				PullRequest: &jenkinsfile.PipelineLifecycles{
 					Build: &jenkinsfile.PipelineLifecycle{
 						Steps: steps,
@@ -212,17 +224,47 @@ func createSteps(buildSteps []BuildStep, buildServices map[string]BuildService) 
 		step.Command = commandAndArgs[0]
 		step.Arguments = commandAndArgs[1:]
 
-		serviceId := buildStep.Service
-
-		fmt.Println(buildServices)
-		fmt.Println("Service id")
-		fmt.Print(serviceId)
-
-		service := buildServices[serviceId]
-		step.Image = service.Image
+		image := getImage(buildStep, buildServices)
+		if image != "" {
+			step.Image = image
+		} else {
+			dockerBuild, dockerImage := addDockerBuildStep()
+			steps = append(steps, dockerBuild)
+			step.Image = dockerImage
+		}
 
 		steps = append(steps, step)
 	}
 
 	return steps
+}
+
+func getAgentImage(buildSteps []BuildStep, buildServices map[string]BuildService) string {
+	var image string
+	for _, buildStep := range buildSteps {
+		image = getImage(buildStep, buildServices)
+		if image != "" {
+			return image
+		}
+	}
+	return "gcr.io/jenkinsxio/builder-go"
+}
+
+
+func getImage(buildStep BuildStep, buildServices map[string]BuildService) string {
+	serviceId := buildStep.Service
+	service := buildServices[serviceId]
+	image := service.Image
+	fmt.Println("Returning image ", image)
+	return image
+}
+
+func addDockerBuildStep() (*syntax.Step, string) {
+	step := &syntax.Step{}
+	step.Name = randomdata.SillyName()
+	step.Image = "gcr.io/kaniko-project/executor:9912ccbf8d22bbafbf971124600fbb0b13b9cbd6"
+	step.Command = "/kaniko/executor"
+	destination := "gcr.io/jenkinsxio/"+step.Name+":${inputs.params.version}"
+	step.Arguments = []string{"--dockerfile=/workspace/source/Dockerfile","--destination="+destination,"--context=/workspace/source","--cache-dir=/workspace"}
+	return step, destination
 }

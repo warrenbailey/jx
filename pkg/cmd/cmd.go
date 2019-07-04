@@ -29,7 +29,6 @@ import (
 	"github.com/jenkins-x/jx/pkg/cmd/gc"
 	"github.com/jenkins-x/jx/pkg/cmd/get"
 	"github.com/jenkins-x/jx/pkg/cmd/importcmd"
-	"github.com/jenkins-x/jx/pkg/cmd/converter"
 	"github.com/jenkins-x/jx/pkg/cmd/initcmd"
 	"github.com/jenkins-x/jx/pkg/cmd/preview"
 	"github.com/jenkins-x/jx/pkg/cmd/rsh"
@@ -105,7 +104,6 @@ func NewJXCommand(f clients.Factory, in terminal.FileReader, out terminal.FileWr
 
 	addProjectCommands := []*cobra.Command{
 		importcmd.NewCmdImport(commonOpts),
-		converter.NewCmdConvert(commonOpts),
 	}
 	addProjectCommands = append(addProjectCommands, findCommands("create archetype", createCommands, deleteCommands)...)
 	addProjectCommands = append(addProjectCommands, findCommands("create spring", createCommands, deleteCommands)...)
