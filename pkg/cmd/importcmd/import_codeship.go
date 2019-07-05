@@ -177,10 +177,10 @@ func buildJenkinsXSchema(options *ConvertOptions, buildSteps []BuildStep, buildS
 	steps := createSteps(buildSteps, buildServices)
 
 	projectConfig := &config.ProjectConfig{
-		BuildPack: "none",
+		//BuildPack: "none",
 		PipelineConfig: &jenkinsfile.PipelineConfig{
 			Agent: &syntax.Agent {
-				Image: getAgentImage(buildSteps, buildServices),
+				Image: getAgentImage(buildSteps[0], buildServices),
 			},
 			Pipelines: jenkinsfile.Pipelines{
 
@@ -228,6 +228,10 @@ func createSteps(buildSteps []BuildStep, buildServices map[string]BuildService) 
 		if image != "" {
 			step.Image = image
 		} else {
+
+			debug := addDebugStep()
+			steps = append(steps, debug)
+
 			dockerBuild, dockerImage := addDockerBuildStep()
 			steps = append(steps, dockerBuild)
 			step.Image = dockerImage
@@ -239,15 +243,13 @@ func createSteps(buildSteps []BuildStep, buildServices map[string]BuildService) 
 	return steps
 }
 
-func getAgentImage(buildSteps []BuildStep, buildServices map[string]BuildService) string {
-	var image string
-	for _, buildStep := range buildSteps {
-		image = getImage(buildStep, buildServices)
-		if image != "" {
-			return image
-		}
+func getAgentImage(buildStep BuildStep, buildServices map[string]BuildService) string {
+	image := getImage(buildStep, buildServices)
+	if image != "" {
+		return image
+	} else {
+		return "jenkinsxio/jx:2.0.128"
 	}
-	return "gcr.io/jenkinsxio/builder-go"
 }
 
 
@@ -255,16 +257,30 @@ func getImage(buildStep BuildStep, buildServices map[string]BuildService) string
 	serviceId := buildStep.Service
 	service := buildServices[serviceId]
 	image := service.Image
-	fmt.Println("Returning image ", image)
 	return image
+}
+
+func addDebugStep() *syntax.Step {
+	step := &syntax.Step{}
+	step.Image = "busybox"
+	step.Name = "debug"
+	step.Command = "cat"
+	step.Arguments = []string {
+		"/workspace/source/Dockerfile",
+	}
+	return step
 }
 
 func addDockerBuildStep() (*syntax.Step, string) {
 	step := &syntax.Step{}
-	step.Name = randomdata.SillyName()
+	step.Name = strings.ToLower(randomdata.SillyName())
 	step.Image = "gcr.io/kaniko-project/executor:9912ccbf8d22bbafbf971124600fbb0b13b9cbd6"
 	step.Command = "/kaniko/executor"
-	destination := "gcr.io/jenkinsxio/"+step.Name+":${inputs.params.version}"
-	step.Arguments = []string{"--dockerfile=/workspace/source/Dockerfile","--destination="+destination,"--context=/workspace/source","--cache-dir=/workspace"}
+	destination := "gcr.io/jx-development/warrenbailey/importer/"+step.Name+":${inputs.params.version}"
+	step.Arguments = []string{
+		"--dockerfile=/workspace/source/Dockerfile",
+		"--destination="+destination,
+		"--context=/workspace/source"}
+
 	return step, destination
 }
