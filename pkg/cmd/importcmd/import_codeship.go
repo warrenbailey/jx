@@ -177,21 +177,35 @@ func buildJenkinsXSchema(options *ConvertOptions, buildSteps []BuildStep, buildS
 	steps := createSteps(buildSteps, buildServices)
 
 	projectConfig := &config.ProjectConfig{
-		//BuildPack: "none",
+		BuildPack: "none",
 		PipelineConfig: &jenkinsfile.PipelineConfig{
-			Agent: &syntax.Agent {
-				Image: getAgentImage(buildSteps[0], buildServices),
-			},
 			Pipelines: jenkinsfile.Pipelines{
-
 				PullRequest: &jenkinsfile.PipelineLifecycles{
-					Build: &jenkinsfile.PipelineLifecycle{
-						Steps: steps,
+					Pipeline: &syntax.ParsedPipeline{
+						Stages: []syntax.Stage{
+							{
+								Agent: &syntax.Agent {
+									Image: getAgentImage(buildSteps[0], buildServices),
+								},
+								Name: "pull-request",
+								Steps: steps,
+							},
+						},
+
 					},
 				},
 				Release: &jenkinsfile.PipelineLifecycles{
-					Build: &jenkinsfile.PipelineLifecycle{
-						Steps: steps,
+					Pipeline: &syntax.ParsedPipeline{
+						Stages: []syntax.Stage{
+							{
+								Agent: &syntax.Agent {
+									Image: getAgentImage(buildSteps[0], buildServices),
+								},
+								Name: "release",
+								Steps: steps,
+							},
+						},
+
 					},
 				},
 			},
@@ -212,14 +226,17 @@ func buildJenkinsXSchema(options *ConvertOptions, buildSteps []BuildStep, buildS
 	return nil
 }
 
-func createSteps(buildSteps []BuildStep, buildServices map[string]BuildService) []*syntax.Step {
-	var steps []*syntax.Step
+func createSteps(buildSteps []BuildStep, buildServices map[string]BuildService) []syntax.Step {
+	var steps []syntax.Step
 
 	for _, buildStep := range buildSteps {
-		step := &syntax.Step{}
 
+		if "deploy" ==  buildStep.Name {
+			//skip deploy steps - we'll now use jenkins x
+			continue
+		}
+		step := syntax.Step{}
 		step.Name = buildStep.Name
-
 		commandAndArgs := strings.Fields(buildStep.Command)
 		step.Command = commandAndArgs[0]
 		step.Arguments = commandAndArgs[1:]
@@ -248,7 +265,7 @@ func getAgentImage(buildStep BuildStep, buildServices map[string]BuildService) s
 	if image != "" {
 		return image
 	} else {
-		return "jenkinsxio/jx:2.0.128"
+		return "gcr.io/jenkinsxio/builder-jx:0.1.553"
 	}
 }
 
@@ -260,8 +277,8 @@ func getImage(buildStep BuildStep, buildServices map[string]BuildService) string
 	return image
 }
 
-func addDebugStep() *syntax.Step {
-	step := &syntax.Step{}
+func addDebugStep() syntax.Step {
+	step := syntax.Step{}
 	step.Image = "busybox"
 	step.Name = "debug"
 	step.Command = "cat"
@@ -271,8 +288,8 @@ func addDebugStep() *syntax.Step {
 	return step
 }
 
-func addDockerBuildStep() (*syntax.Step, string) {
-	step := &syntax.Step{}
+func addDockerBuildStep() (syntax.Step, string) {
+	step := syntax.Step{}
 	step.Name = strings.ToLower(randomdata.SillyName())
 	step.Image = "gcr.io/kaniko-project/executor:9912ccbf8d22bbafbf971124600fbb0b13b9cbd6"
 	step.Command = "/kaniko/executor"
