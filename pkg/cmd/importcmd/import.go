@@ -149,6 +149,8 @@ func NewCmdImport(commonOpts *opts.CommonOptions) *cobra.Command {
 	cmd.Flags().StringVarP(&options.SelectFilter, "filter", "", "", "If selecting projects to import from a Git provider this filters the list of repositories")
 	options.AddImportFlags(cmd, false)
 
+	cmd.AddCommand(NewCmdImportTravis(options))
+
 	return cmd
 }
 
