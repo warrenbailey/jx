@@ -5,7 +5,9 @@ import (
 	"github.com/jenkins-x/jx/pkg/cmd/helper"
 	"github.com/jenkins-x/jx/pkg/cmd/templates"
 	"github.com/jenkins-x/jx/pkg/config"
+	"github.com/jenkins-x/jx/pkg/jenkinsfile"
 	"github.com/jenkins-x/jx/pkg/log"
+	"github.com/jenkins-x/jx/pkg/tekton/syntax"
 	"github.com/jenkins-x/jx/pkg/util"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
@@ -13,20 +15,31 @@ import (
 	"os"
 	"path/filepath"
 	"sigs.k8s.io/yaml"
+	"strings"
 )
 
 // ImportOptions options struct for jx import
 type ImportTravisOptions struct {
 	RepoURL string
-	Dir string
+	Dir     string
 	*ImportOptions
 }
 
 // Travis - representation of a Travis YAML
 type Travis struct {
-	Language   string    `json:"language,omitempty"`
+	Language string `json:"language,omitempty"`
+	Dist string   `json:"dist,omitempty"`
+	Env  []string `json:"env,omitempty"`
+	Go string `json:"go,omitempty"`
+	Install string `json:"go,omitempty"`
+	BeforeScript []string `json:"before_script,omitempty"`
+	Script []string `json:"script,omitempty"`
+	Git Git `json:"script,omitempty"`
 }
 
+type Git struct {
+	Depth string `json:"depth,omitempty"`
+}
 
 var (
 	convertLong = templates.LongDesc(`
@@ -82,20 +95,32 @@ func (options *ImportTravisOptions) Run() error {
 	}
 
 	log.Logger().Infof("Travis schema loaded %s", travis)
+	if confirmSupport(travis) {
+		if travis != nil {
+			err = buildJenkinsXSchema(options, travis)
+			if err != nil {
+				return errors.Wrapf(err, "failed to run jx import travis")
+			}
 
-	if travis != nil {
-		err = buildJenkinsXSchema(options, travis)
-		if err != nil {
-			return errors.Wrapf(err, "failed to run jx import travis")
-		}
-
-		// now run the jx import
-		err = options.ImportOptions.Run()
-		if err != nil {
-			return errors.Wrapf(err, "failed to run jx import travis")
+			// now run the jx import
+			err = options.ImportOptions.Run()
+			if err != nil {
+				return errors.Wrapf(err, "failed to run jx import travis")
+			}
 		}
 	}
 	return err
+}
+
+func confirmSupport(travis *Travis) bool {
+
+	if travis.Language == "go" || travis.Language == "python" {
+		return true
+	} else {
+		log.Logger().Errorf("Currently unable to support language %s", travis.Language)
+		return false
+	}
+
 }
 
 // loadTravisSchema loads a specific project YAML configuration file
@@ -108,7 +133,7 @@ func loadTravisSchema(options *ImportTravisOptions) (*Travis, error) {
 		return nil, errors.Wrapf(err, "failed to check if file exists %s", fileName)
 	}
 	if !exists {
-		log.Logger().Infof("File does not exist %s", fileName)
+		log.Logger().Errorf("File does not exist %s", fileName)
 		return nil, nil
 	}
 
@@ -118,7 +143,12 @@ func loadTravisSchema(options *ImportTravisOptions) (*Travis, error) {
 		return nil, fmt.Errorf("failed to load file %s due to %s", fileName, err)
 	}
 
-	log.Logger().Infof("Date is %s", data)
+	if data == nil {
+		log.Logger().Errorf("File is empty %s", fileName)
+		return nil, nil
+	}
+
+	log.Logger().Debugf("Data is %s", data)
 	travis := &Travis{}
 	err = yaml.Unmarshal(data, &travis)
 	if err != nil {
@@ -127,7 +157,6 @@ func loadTravisSchema(options *ImportTravisOptions) (*Travis, error) {
 	log.Logger().Infof("Travis is %s", travis)
 	return travis, nil
 }
-
 
 func determineWorkingDir(options *ImportTravisOptions) error {
 	if options.Dir == "" {
@@ -145,11 +174,45 @@ func determineWorkingDir(options *ImportTravisOptions) error {
 	return nil
 }
 
-
 func buildJenkinsXSchema(options *ImportTravisOptions, travis *Travis) error {
+
+	steps := createSteps(travis)
 
 	projectConfig := &config.ProjectConfig{
 		BuildPack: travis.Language,
+		PipelineConfig: &jenkinsfile.PipelineConfig{
+			Pipelines: jenkinsfile.Pipelines{
+				PullRequest: &jenkinsfile.PipelineLifecycles{
+					Pipeline: &syntax.ParsedPipeline{
+						Stages: []syntax.Stage{
+							{
+								Agent: &syntax.Agent {
+									Image: travis.Dist,
+								},
+								Name: "pull-request",
+								Steps: steps,
+							},
+						},
+
+					},
+				},
+				Release: &jenkinsfile.PipelineLifecycles{
+					Pipeline: &syntax.ParsedPipeline{
+						Stages: []syntax.Stage{
+							{
+								Agent: &syntax.Agent {
+									Image: travis.Dist,
+								},
+								Name: "release",
+								Steps: steps,
+							},
+						},
+
+					},
+				},
+			},
+
+		},
 	}
 
 	data, err := yaml.Marshal(&projectConfig)
@@ -165,3 +228,24 @@ func buildJenkinsXSchema(options *ImportTravisOptions, travis *Travis) error {
 	return nil
 }
 
+func createSteps(travis *Travis) []syntax.Step {
+
+	scripts := travis.Script
+	log.Logger().Infof("scripts %s", scripts)
+
+	var steps []syntax.Step
+
+	for index, script := range scripts {
+		step := syntax.Step{}
+		step.Name = "step-" + string(index)
+
+		commandAndArgs := strings.Split(script, " ")
+		step.Command = commandAndArgs[0]
+		step.Arguments = commandAndArgs[1:]
+		step.Image = travis.Dist
+		steps = append(steps, step)
+
+	}
+
+	return steps
+}
