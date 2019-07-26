@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"sigs.k8s.io/yaml"
+	"strconv"
 	"strings"
 )
 
@@ -28,13 +29,13 @@ type ImportTravisOptions struct {
 // Travis - representation of a Travis YAML
 type Travis struct {
 	Language string `json:"language,omitempty"`
-	Dist string   `json:"dist,omitempty"`
+	Dist string   `json:"dist,omitempty"` // ignored
 	Env  []string `json:"env,omitempty"`
 	Go string `json:"go,omitempty"`
 	Install string `json:"go,omitempty"`
 	BeforeScript []string `json:"before_script,omitempty"`
 	Script []string `json:"script,omitempty"`
-	Git Git `json:"script,omitempty"`
+	Git Git `json:"git,omitempty"`
 }
 
 type Git struct {
@@ -187,7 +188,7 @@ func buildJenkinsXSchema(options *ImportTravisOptions, travis *Travis) error {
 						Stages: []syntax.Stage{
 							{
 								Agent: &syntax.Agent {
-									Image: travis.Dist,
+									Image: "gcr.io/jenkinsxio/builder-"+travis.Language,
 								},
 								Name: "pull-request",
 								Steps: steps,
@@ -201,7 +202,7 @@ func buildJenkinsXSchema(options *ImportTravisOptions, travis *Travis) error {
 						Stages: []syntax.Stage{
 							{
 								Agent: &syntax.Agent {
-									Image: travis.Dist,
+									Image: "gcr.io/jenkinsxio/builder-"+travis.Language,
 								},
 								Name: "release",
 								Steps: steps,
@@ -230,21 +231,30 @@ func buildJenkinsXSchema(options *ImportTravisOptions, travis *Travis) error {
 
 func createSteps(travis *Travis) []syntax.Step {
 
-	scripts := travis.Script
-	log.Logger().Infof("scripts %s", scripts)
+	beforeScripts := travis.BeforeScript
+	log.Logger().Infof("scripts %s", beforeScripts)
 
 	var steps []syntax.Step
 
-	for index, script := range scripts {
+	for index, script := range beforeScripts {
 		step := syntax.Step{}
-		step.Name = "step-" + string(index)
-
+		step.Name = "before-step-" + strconv.Itoa(index)
 		commandAndArgs := strings.Split(script, " ")
 		step.Command = commandAndArgs[0]
 		step.Arguments = commandAndArgs[1:]
-		step.Image = travis.Dist
 		steps = append(steps, step)
+	}
 
+	scripts := travis.Script
+	log.Logger().Infof("scripts %s", scripts)
+
+	for index, script := range scripts {
+		step := syntax.Step{}
+		step.Name = "install-step-" + strconv.Itoa(index)
+		commandAndArgs := strings.Split(script, " ")
+		step.Command = commandAndArgs[0]
+		step.Arguments = commandAndArgs[1:]
+		steps = append(steps, step)
 	}
 
 	return steps
